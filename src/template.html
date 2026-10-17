@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}}</title>
+<meta name="description" content="Working paper: sex differences in hitting the wall among 1.4 million marathon finishers in Berlin, Chicago and London, with an interactive replay of the 2014 Boston Marathon.">
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;0,8..60,700;1,8..60,400&family=Source+Sans+3:wght@400;600;700&display=swap">
+<style>
+/* Layout: a single reading column like a journal preprint. Wide figure (the replay) breaks out of the column. One light theme on purpose: the charts are drawn on white. */
+:root {
+  --paper: #FFFFFF; --ink: #1A1A1A; --sub: #5C5C5C; --rule: #D9D9D9; --tint: #F6F5F2; --accent: #9E1B1B;
+  --serif: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --sans: "Source Sans 3", "Helvetica Neue", Arial, sans-serif;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--serif); font-size: 18px; line-height: 1.6; }
+.wrap { max-width: 720px; margin: 0 auto; padding-inline: 20px; padding-block: 48px 80px; }
+header.title { display: grid; gap: 10px; padding-bottom: 28px; border-bottom: 1px solid var(--ink); margin-bottom: 28px; }
+.kicker { font-family: var(--sans); font-size: 13px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); margin: 0; }
+h1 { font-size: clamp(28px, 5vw, 40px); line-height: 1.15; margin: 0; font-weight: 700; text-wrap: balance; letter-spacing: -.01em; }
+.byline { font-family: var(--sans); font-size: 15px; color: var(--sub); margin: 0; display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.byline a { color: var(--sub); }
+h2 { font-size: 24px; line-height: 1.25; margin: 48px 0 12px; font-weight: 700; text-wrap: balance; }
+h3 { font-size: 19px; line-height: 1.3; margin: 32px 0 8px; font-weight: 600; font-style: italic; }
+p, ul, ol { margin: 0 0 16px; }
+li { margin-bottom: 6px; }
+a { color: var(--accent); text-underline-offset: 2px; overflow-wrap: anywhere; }
+.draft { font-family: var(--sans); font-size: 15px; line-height: 1.5; background: #FFF4E5; border-left: 4px solid #C25E00; padding: 14px 18px; margin: 0 0 28px; }
+.draft p { margin: 0; }
+.abstract { background: var(--tint); padding: 4px 24px 8px; margin: 0 0 8px; }
+.abstract h2 { font-family: var(--sans); font-size: 13px; letter-spacing: .1em; text-transform: uppercase; margin: 20px 0 8px; }
+.abstract p { font-size: 17px; }
+figure { margin: 32px 0; display: grid; gap: 10px; }
+figure img { display: block; width: 100%; height: auto; border: 1px solid var(--rule); }
+figure.wide { margin-inline: calc(50% - min(50vw, 520px) + 10px); }
+.replay iframe { display: block; width: 100%; height: 900px; border: 1px solid var(--rule); background: #fff; }
+figcaption { font-family: var(--sans); font-size: 15px; line-height: 1.45; color: var(--sub); max-width: 720px; justify-self: center; width: 100%; padding-inline: 0; }
+figure.wide figcaption { max-width: 680px; }
+.tablewrap { overflow-x: auto; margin: 24px 0; }
+table { border-collapse: collapse; width: 100%; font-family: var(--sans); font-size: 15px; font-variant-numeric: tabular-nums lining-nums; border-top: 2px solid var(--ink); border-bottom: 2px solid var(--ink); }
+caption { caption-side: top; text-align: left; font-family: var(--sans); font-size: 15px; font-weight: 700; padding-bottom: 8px; }
+th, td { padding: 7px 10px; vertical-align: top; }
+thead th { border-bottom: 1px solid var(--ink); font-weight: 700; text-align: left; }
+tbody tr + tr td { border-top: 1px solid var(--rule); }
+td[style*="right"], th[style*="right"] { white-space: nowrap; }
+#references ~ p { padding-left: 2em; text-indent: -2em; font-size: 16px; overflow-wrap: anywhere; }
+footer { margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--rule); font-family: var(--sans); font-size: 14px; color: var(--sub); }
+@media (max-width: 600px) {
+  body { font-size: 17px; }
+  .wrap { padding-inline: 16px; padding-block: 28px 56px; }
+  .abstract { padding-inline: 16px; }
+  figure.wide { margin-inline: 0; }
+}
+</style>
+</head>
+<body>
+<main class="wrap">
+<header class="title">
+  <p class="kicker">Working paper · Draft</p>
+  <h1>{{title}}</h1>
+  <p class="byline"><span>{{author}}</span><span>{{date}}</span><a href="#data-and-code">Data and code</a></p>
+</header>
+{{body}}
+<footer>Analysis files: <a href="analysis/analysis.py">analysis.py</a> · <a href="analysis/results.json">results.json</a> · <a href="analysis/race_by_race.csv">race_by_race.csv</a> · <a href="analysis/wall-spot-check.Rmd">wall-spot-check.Rmd</a></footer>
+</main>
+<script>
+/* Size the replay frame to its content (same origin) */
+(function () {
+  var f = document.querySelector('.replay iframe');
+  if (!f) return;
+  function fit() { try { var h = f.contentDocument.documentElement.scrollHeight; if (h) f.style.height = h + 'px'; } catch (e) {} }
+  f.addEventListener('load', function () { fit(); setTimeout(fit, 400); try { f.contentWindow.addEventListener('resize', fit); } catch (e) {} });
+  addEventListener('resize', fit);
+})();
+</script>
+</body>
+</html>

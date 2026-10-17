@@ -1,0 +1,295 @@
+---
+title: "Who hits the wall? Spot check in R"
+output:
+  html_document:
+    toc: true
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+## What this notebook does
+
+This notebook checks the headline numbers in the marathon story without using anything Claude produced except the list of numbers being checked. It:
+
+1. downloads the race results directly from the two public GitHub repositories onto your Mac,
+2. applies the same rules as the story (who counts, and what "hitting the wall" means),
+3. counts runners itself, and
+4. prints each number it got next to the number the story claims, with a **match** column.
+
+Every number in the "recomputed" columns is worked out here, on your machine, from the race organisers' results. If the story's numbers had been made up rather than calculated, they wouldn't match.
+
+**Before you start:** install the packages once by running `install.packages("tidyverse")` in the RStudio console. Then press **Knit** (or run the chunks one at a time with the green arrows).
+
+**Download size:** the quick check downloads 4 files, about 68 MB in total, into a folder called `raw-data` next to this file. They're only downloaded the first time. The optional full check at the end needs about 415 MB more and is switched off unless you turn it on.
+
+```{r packages}
+library(tidyverse)
+```
+
+## Step 1: download the raw files
+
+```{r download}
+dir.create("raw-data", showWarnings = FALSE)
+options(timeout = 600)   # big files can take a few minutes on a slow connection
+
+mr <- "https://raw.githubusercontent.com/AndrewMillerOnline/marathon-results/main"
+
+files <- tribble(
+  ~local,                        ~url,
+  "berlin-2010.csv",             paste0(mr, "/Berlin/results-2010.csv"),
+  "chicago-2007.csv",            paste0(mr, "/Chicago/results-2007.csv"),
+  "london-2014-2018.csv",        paste0(mr, "/London/results-2014-2018.csv"),
+  "boston-2014.csv",             "https://raw.githubusercontent.com/llimllib/bostonmarathon/master/results/2014/results.csv"
+)
+
+for (i in seq_len(nrow(files))) {
+  dest <- file.path("raw-data", files$local[i])
+  if (!file.exists(dest)) download.file(files$url[i], dest, mode = "wb")
+}
+
+# How big are they?
+tibble(file = files$local,
+       MB = round(file.size(file.path("raw-data", files$local)) / 1e6, 1))
+```
+
+## Step 2: the rules, written as R functions
+
+Times in the files look like `"01:49:31"`. This turns them into seconds (1 × 3600 + 49 × 60 + 31 = 6,571).
+
+```{r to-seconds}
+to_seconds <- function(x) {
+  parts <- str_split_fixed(str_trim(x), ":", 4)
+  as.numeric(parts[, 1]) * 3600 + as.numeric(parts[, 2]) * 60 + as.numeric(parts[, 3])
+}
+
+to_seconds("01:49:31")
+```
+
+These are the cleaning rules and the wall definition used in the story:
+
+- gender is the first letter of the gender column: M is a man, F or W is a woman;
+- the half-way and finish times must both exist, and the finish must come after half-way;
+- finish between 2 and 8 hours, and a second half that is no more than 50% faster or 300% slower than the first (this removes typing errors in the results);
+- **hit the wall = second half at least 20% slower than the first half.**
+
+```{r rules}
+clean_and_flag <- function(df) {
+  df |>
+    mutate(
+      first_letter = str_to_upper(str_sub(gender, 1, 1)),
+      sex  = case_when(first_letter == "M" ~ "Men",
+                       first_letter %in% c("F", "W") ~ "Women"),
+      half = to_seconds(time_half),
+      full = to_seconds(time_full)
+    ) |>
+    filter(!is.na(sex), half > 0, full > half) |>
+    mutate(slow = (full - half) / half - 1) |>          # how much slower the second half was
+    filter(full >= 2 * 3600, full < 8 * 3600, slow > -0.5, slow < 3) |>
+    mutate(wall = slow >= 0.20)
+}
+
+# Count runners and wall-hitters for men and women
+wall_table <- function(df) {
+  df |>
+    group_by(sex) |>
+    summarise(runners = n(),
+              hit_wall = sum(wall),
+              percent = round(100 * hit_wall / runners, 1))
+}
+```
+
+## Step 3: look at one runner by hand
+
+Martin Rusam, Berlin 2010. Open `raw-data/berlin-2010.csv` in Excel or Numbers if you like and find him yourself.
+
+```{r one-runner}
+berlin <- read_csv("raw-data/berlin-2010.csv", col_types = cols(.default = col_character()))
+
+berlin |>
+  filter(first_name == "Martin", last_name == "Rusam") |>
+  select(last_name, time_half, time_full) |>
+  mutate(half_s   = to_seconds(time_half),
+         finish_s = to_seconds(time_full),
+         second_s = finish_s - half_s,
+         pct_slower = round(100 * (second_s / half_s - 1), 1))
+```
+
+The story's check sheet says: half-way 6,571 s, finish 14,794 s, 25.1% slower, so he counts as hitting the wall.
+
+## Step 4: one race at a time
+
+### Berlin 2010 (the race where men and women were closest)
+
+```{r berlin}
+berlin_result <- berlin |> clean_and_flag() |> wall_table()
+berlin_result
+```
+
+### Chicago 2007 (the hot year)
+
+```{r chicago}
+chicago <- read_csv("raw-data/chicago-2007.csv", col_types = cols(.default = col_character()))
+chicago_result <- chicago |> clean_and_flag() |> wall_table()
+chicago_result
+```
+
+### London 2018
+
+One quirk in the London file: for 2015 to 2018, every row is shifted one column to the right. The half-way time sits in the `division` column and the finish time in `time_half`, leaving `time_full` empty. You can see this by opening the file and looking at any 2018 row. This moves the times back:
+
+```{r london}
+london <- read_csv("raw-data/london-2014-2018.csv", col_types = cols(.default = col_character()))
+
+london_fixed <- london |>
+  mutate(shifted   = is.na(time_full),
+         time_full = if_else(shifted, time_half, time_full),
+         time_half = if_else(shifted, division, time_half))
+
+# Three 2018 rows before and after the fix
+london |> filter(year == "2018") |> select(runner_name, division, time_half, time_full) |> head(3)
+london_fixed |> filter(year == "2018") |> select(runner_name, time_half, time_full) |> head(3)
+
+london_result <- london_fixed |> filter(year == "2018") |> clean_and_flag() |> wall_table()
+london_result
+```
+
+## Step 5: Boston 2014 (the race replay)
+
+Boston's file gives times in minutes at every 5 km, so the story uses a pace-based version of the wall: at 40 km, a runner has hit the wall if they are running at least 25% slower than their own pace between 5 km and 20 km. The pace at 40 km is blended from the 35–40 km pace and the 40 km-to-finish pace, the same way the replay draws it.
+
+```{r boston}
+boston_raw <- read_csv("raw-data/boston-2014.csv", col_types = cols(.default = col_character()))
+
+boston <- boston_raw |>
+  mutate(across(c(`5k`, `10k`, `20k`, `25k`, `30k`, `35k`, `40k`, official),
+                ~ suppressWarnings(as.numeric(.x)))) |>
+  filter(if_all(c(`5k`, `10k`, `20k`, `25k`, `30k`, `35k`, `40k`, official), ~ !is.na(.x)))
+
+boston_with_splits <- nrow(boston)
+
+t <- (40 - 37.5) / (41.1 - 37.5)
+boston <- boston |>
+  mutate(base  = (`20k` - `5k`) / 15,                  # minutes per km, 5 to 20 km
+         seg6  = (`40k` - `35k`) / 5 / base,            # 35-40 km pace vs own base pace
+         seg7  = (official - `40k`) / 2.195 / base,     # 40 km-finish pace vs own base pace
+         rel40 = seg6 + (seg7 - seg6) * t) |>
+  filter(base > 0, rel40 >= 0.5, rel40 <= 4) |>
+  mutate(sex  = recode(gender, M = "Men", F = "Women"),
+         wall = rel40 >= 1.25)
+
+boston_all    <- boston |> wall_table()
+boston_330400 <- boston |> filter(official >= 210, official < 240) |> wall_table()   # finish 3:30 to 3:59
+
+boston_all
+boston_330400
+```
+
+## Step 6: compare with the story's numbers
+
+The "claimed" column is typed in from the story and the working paper. Everything in the "recomputed" column comes from the steps above.
+
+```{r compare}
+get <- function(tab, who, what) tab |> filter(sex == who) |> pull({{ what }})
+
+check <- tribble(
+  ~number,                                         ~claimed,  ~recomputed,
+  "Berlin 2010: finishers analysed",                  33983,  sum(berlin_result$runners),
+  "Berlin 2010: men hitting the wall (%)",              8.8,  get(berlin_result, "Men", percent),
+  "Berlin 2010: women hitting the wall (%)",            6.2,  get(berlin_result, "Women", percent),
+  "Chicago 2007: finishers analysed",                 25495,  sum(chicago_result$runners),
+  "Chicago 2007: men hitting the wall (%)",            76.5,  get(chicago_result, "Men", percent),
+  "Chicago 2007: women hitting the wall (%)",          57.6,  get(chicago_result, "Women", percent),
+  "London 2018: finishers analysed",                  39995,  sum(london_result$runners),
+  "London 2018: men hitting the wall (%)",             51.3,  get(london_result, "Men", percent),
+  "London 2018: women hitting the wall (%)",           27.8,  get(london_result, "Women", percent),
+  "Boston 2014: finishers in the file",               31984,  nrow(boston_raw),
+  "Boston 2014: finishers with every split",          31687,  boston_with_splits,
+  "Boston 2014: finishers analysed",                  31683,  nrow(boston),
+  "Boston 2014: men hitting the wall (%)",             34.7,  get(boston_all, "Men", percent),
+  "Boston 2014: women hitting the wall (%)",           16.5,  get(boston_all, "Women", percent),
+  "Boston 3:30-4:00: men who hit the wall",            1568,  get(boston_330400, "Men", hit_wall),
+  "Boston 3:30-4:00: men in that band",                3922,  get(boston_330400, "Men", runners),
+  "Boston 3:30-4:00: men hitting the wall (%)",        40.0,  get(boston_330400, "Men", percent),
+  "Boston 3:30-4:00: women who hit the wall",           469,  get(boston_330400, "Women", hit_wall),
+  "Boston 3:30-4:00: women in that band",              4803,  get(boston_330400, "Women", runners),
+  "Boston 3:30-4:00: women hitting the wall (%)",       9.8,  get(boston_330400, "Women", percent)
+) |>
+  mutate(match = if_else(claimed == recomputed, "match", "MISMATCH"),
+         across(c(claimed, recomputed), ~ prettyNum(.x, big.mark = ",")))
+
+knitr::kable(check)
+```
+
+```{r verdict}
+cat(sum(check$match == "match"), "of", nrow(check), "numbers match.\n")
+```
+
+## Optional: the full check (all 42 races)
+
+This reproduces the overall numbers (23.8% of men and 17.0% of women across 1,426,503 finishers) and the "middle of the pack" numbers. It downloads every Berlin, Chicago and London file, about 415 MB, and takes a while. To run it, change `run_full_check` to `TRUE` and knit again.
+
+```{r full-switch}
+run_full_check <- FALSE
+```
+
+```{r full, eval = run_full_check}
+all_files <- c(sprintf("Berlin/results-%d.csv", 1999:2019),
+               sprintf("Chicago/results-%d.csv", 2000:2018),
+               "London/results-2010-2013.csv", "London/results-2014-2018.csv")
+
+dir.create("raw-data/all", showWarnings = FALSE)
+for (f in all_files) {
+  dest <- file.path("raw-data/all", str_replace(f, "/", "-"))
+  if (!file.exists(dest)) download.file(paste0(mr, "/", f), dest, mode = "wb")
+}
+
+read_race_file <- function(f) {
+  df <- read_csv(file.path("raw-data/all", str_replace(f, "/", "-")),
+                 col_types = cols(.default = col_character()))
+  if (str_starts(f, "London") && "division" %in% names(df)) {      # the London column shift
+    df <- df |> mutate(shifted   = is.na(time_full),
+                       time_full = if_else(shifted, time_half, time_full),
+                       time_half = if_else(shifted, division, time_half))
+  }
+  df |> select(any_of(c("time_half", "time_full", "gender", "year"))) |>
+    mutate(city = str_extract(f, "^[A-Za-z]+"))
+}
+
+everything <- map(all_files, read_race_file) |> list_rbind() |>
+  mutate(year = as.integer(year))
+
+# The three race-years left out (explained in the paper)
+included <- everything |>
+  filter(!(city == "London"  & year <= 2013),
+         !(city == "Berlin"  & year == 2003),
+         !(city == "Chicago" & year %in% c(2012, 2013)))
+
+analysed <- included |> clean_and_flag()
+overall  <- analysed |> wall_table()
+middle   <- analysed |> filter(full >= 3.5 * 3600, full < 4.5 * 3600) |> wall_table()
+
+full_check <- tribble(
+  ~number,                                          ~claimed,  ~recomputed,
+  "Rows in all the source files",                    1647579,  nrow(everything),
+  "Rows in the 42 included races",                   1430512,  nrow(included),
+  "Finishers analysed",                              1426503,  nrow(analysed),
+  "Number of races",                                      42,  n_distinct(paste(analysed$city, analysed$year)),
+  "Men analysed",                                     950329,  get(overall, "Men", runners),
+  "Men who hit the wall",                             226284,  get(overall, "Men", hit_wall),
+  "Men hitting the wall (%)",                           23.8,  get(overall, "Men", percent),
+  "Women analysed",                                   476174,  get(overall, "Women", runners),
+  "Women who hit the wall",                            81156,  get(overall, "Women", hit_wall),
+  "Women hitting the wall (%)",                         17.0,  get(overall, "Women", percent),
+  "3:30-4:30 finishers",                              648059,  sum(middle$runners),
+  "3:30-4:30: men who hit the wall",                   74822,  get(middle, "Men", hit_wall),
+  "3:30-4:30: men (%)",                                 16.1,  get(middle, "Men", percent),
+  "3:30-4:30: women who hit the wall",                  9766,  get(middle, "Women", hit_wall),
+  "3:30-4:30: women (%)",                                5.3,  get(middle, "Women", percent)
+) |>
+  mutate(match = if_else(claimed == recomputed, "match", "MISMATCH"),
+         across(c(claimed, recomputed), ~ prettyNum(.x, big.mark = ",")))
+
+knitr::kable(full_check)
+```
